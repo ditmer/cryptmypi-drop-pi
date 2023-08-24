@@ -1,0 +1,27 @@
+#!/bin/bash
+set -e
+
+#
+# Scripts run outside of sd card chroot (like rename sdcard)
+#
+#
+
+
+
+if [ -z "${_STAGE2_POST_INSTALL}" ]; then
+    _STAGE2_POST_INSTALL='stage2-postinstall.sh'
+        echo_info "Other script _STAGE2_POST_INSTALL is not set on config: Setting default value ${_STAGE2_POST_INSTALL}"
+fi
+
+
+_STAGE2_POST_INSTALL_SCRIPT="${_CONFDIR}/${_STAGE2_POST_INSTALL}"
+
+
+echo_info "Checking if stage2 post install script ${_STAGE2_POST_INSTALL_SCRIPT} exists ..."
+test -f "${_STAGE2_POST_INSTALL_SCRIPT}" && {
+    echo_info "   ${_STAGE2_POST_INSTALL_SCRIPT} found!"
+    /bin/bash -c "${_STAGE2_POST_INSTALL_SCRIPT}"
+    echo_info "## End of Script execution #####################################################"
+} || {
+    echo_info "    SKIPPING: Optional stage2 other script was not found (and will not be executed)."
+}

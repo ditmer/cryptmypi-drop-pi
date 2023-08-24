@@ -1,0 +1,71 @@
+#!/bin/bash
+set -e
+
+
+echo_debug "Attempting to install dropbear ..."
+
+
+if [ -z "${_SSH_LOCAL_KEYFILE}" ]; then
+    echo_error "ERROR: _SSH_LOCAL_KEYFILE variable was not set. Exiting..."
+    exit 1
+else
+    test -f "${_SSH_LOCAL_KEYFILE}" || {
+        echo_error "ERROR: Obligatory SSH keyfile '${_SSH_LOCAL_KEYFILE}' could not be found. Exiting..."
+        exit 1
+    }
+fi
+
+
+# Installing packages
+chroot_pkginstall dropbear dropbear-initramfs
+
+# Backwards compatibility on dropbear-initramfs
+echo_debug "Attempting dropbear compatibility sanity check with newer versions ..."
+chroot_execute  /bin/bash << "EOF"
+if [ -d "/etc/dropbear/initramfs" ]; then
+    # New path location for drobbear initramfs exists.
+    echo "Found /etc/dropbear/initramfs directory."
+    cd /etc
+    echo "Linking /etc/dropbear/initramfs to /etc/dropbear-initramfs directory."
+    ln -s dropbear/initramfs dropbear-initramfs
+    echo "Linking /etc/dropbear/initramfs/config to /etc/dropbear/initramfs/dropbear.conf."
+    cd /etc/dropbear/initramfs
+    if [ -f "dropbear.conf" ]; then
+        mv dropbear.conf config
+    else
+        echo '#DROPBEAR_OPTIONS=' >> config
+    fi
+    ln -s config dropbear.conf
+    echo $$
+fi
+EOF
+
+# Adding command to authorized keys
+cat << "EOF" > ${CHROOTDIR}/etc/dropbear-initramfs/authorized_keys.tmp
+command="/etc/unlock.sh; exit" 
+EOF
+#command="export PATH='/sbin:/bin/:/usr/sbin:/usr/bin'; cryptsetup luksOpen /dev/mmcblk0p2 crypt && /scripts/local-top/cryptroot || reboot -f;  for i in $(ps aux | grep cryptroot | awk '{print $1}'); do kill -9 $i; done; for i in $(ps aux | grep askpass | awk '{print $1}'); do kill -9 $i; done; exit" 
+tr -d '\n' < ${CHROOTDIR}/etc/dropbear-initramfs/authorized_keys.tmp > ${CHROOTDIR}/etc/dropbear-initramfs/authorized_keys
+rm -f ${CHROOTDIR}/etc/dropbear-initramfs/authorized_keys.tmp
+
+
+# Now append our key to dropbear authorized_keys file
+cat "${_SSH_LOCAL_KEYFILE}.pub" >> ${CHROOTDIR}/etc/dropbear-initramfs/authorized_keys
+chmod 600 ${CHROOTDIR}/etc/dropbear-initramfs/authorized_keys
+
+
+# Update dropbear for some sleep in initramfs
+sed -i 's/run_dropbear &/sleep 5\nrun_dropbear &/g' ${CHROOTDIR}/usr/share/initramfs-tools/scripts/init-premount/dropbear
+
+
+# Change the port that dropbear runs on to make our lives easier
+sed -i 's/#DROPBEAR_OPTIONS=/DROPBEAR_OPTIONS="-p 2222"/g' ${CHROOTDIR}/etc/dropbear-initramfs/config
+
+
+# Using provided dropbear keys (or backuping generating ones for later usage)
+backup_and_use_sshkey ${CHROOTDIR}/etc/dropbear-initramfs/dropbear_dss_host_key
+backup_and_use_sshkey ${CHROOTDIR}/etc/dropbear-initramfs/dropbear_ecdsa_host_key
+backup_and_use_sshkey ${CHROOTDIR}/etc/dropbear-initramfs/dropbear_rsa_host_key
+
+
+echo_debug "... dropbearpi call completed!"

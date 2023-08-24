@@ -1,0 +1,6 @@
+#!/bin/bash
+set -e
+
+
+chroot_umount || true
+#chroot_umount

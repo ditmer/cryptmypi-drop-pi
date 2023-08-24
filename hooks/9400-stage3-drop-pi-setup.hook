@@ -1,0 +1,65 @@
+#!/bin/bash
+set -e
+
+
+chroot_update
+chroot_pkginstall git tcpdump bridge-utils ebtables iptables ifplugd net-tools macchanger
+
+# Git clone 
+chroot_execute mkdir -p /opt/Drop-Pi
+chroot_execute git -C /opt/Drop-Pi pull || chroot_execute git clone https://github.com/ditmer/Drop-Pi.git /opt/Drop-Pi
+
+if [ -z "${_INTERFACE0}" ]; then
+    _INTERFACE0="eth0"
+fi
+if [ -z "${_INTERFACE1}" ]; then
+    _INTERFACE1="eth1"
+fi
+
+# update interfaces
+cat << EOF > ${CHROOTDIR}/etc/network/interfaces
+allow-hotplug ${_INTERFACE0}
+	iface ${_INTERFACE0} inet manual
+	up ifconfig ${_INTERFACE0} up
+	pre-up /opt/Drop-Pi/NacBypass2.0/pre-up.sh
+	pre-down /opt/Drop-Pi/NacBypass2.0/NacBypass.sh down
+EOF
+
+
+# ifplug.conf
+cat << EOF > ${CHROOTDIR}/etc/ifplugd/ifplug.conf
+INTERFACES="${_INTERFACE0}"
+HOTPLUG_INTERFACES=""
+ARGS="-a -r /etc/ifplugd/ifplugd.action"
+SUSPEND_ACTION="stop"
+EOF
+
+# Create action
+cat << EOF > ${CHROOTDIR}/etc/ifplugd/ifplugd.action
+#!/bin/bash
+
+case "\$2" in
+  up)
+    if [ "\$1" = "${_INTERFACE0}" ]; then
+      exec /opt/Drop-Pi/NacBypass2.0/NacBypass.sh up
+    fi
+  ;;
+  down)
+    if [ "\$1" = "${_INTERFACE0}" ]; then
+      exec /opt/Drop-Pi/NacBypass2.0/NacBypass.sh check_up
+    fi
+  ;;
+esac
+EOF
+
+if [ -f "${CHROOTDIR}/etc/default/ifplugd" ]; then
+    chroot_execute cp /etc/ifplugd/ifplug.conf /etc/default/ifplugd
+fi
+
+# enable ifplugd
+chroot_execute systemctl enable ifplugd
+
+
+# replace nics in nac script
+sed  -i 's/\(^COMPINT=\).*/\COMPINT='"${_INTERFACE0}"'/' ${CHROOTDIR}/opt/Drop-Pi/NacBypass2.0/NacBypass.sh
+sed  -i 's/\(^SWINT=\).*/\SWINT='"${_INTERFACE1}"'/' ${CHROOTDIR}/opt/Drop-Pi/NacBypass2.0/NacBypass.sh

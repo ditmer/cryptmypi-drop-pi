@@ -1,0 +1,26 @@
+# Build related directories
+build/
+*build*/
+
+# File caches
+files/images/
+files/cache/
+
+# Keyfiles
+id_rsa
+id_rsa.pub
+dropbear_*_key
+
+# IDE configuration files
+.vscode/
+*.code-workspace
+
+# Personal directories
+personal/
+
+# Other genral files
+*.zip
+
+# Experimental hooks
+hooks/0000-experimental-driver-rtl8188eu.hook
+hooks/0000-experimental-initramfs-v2wifi.hook

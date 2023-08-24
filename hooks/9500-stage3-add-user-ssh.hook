@@ -1,0 +1,33 @@
+#!/bin/bash
+set -e
+
+TEMPPW=$(openssl passwd -1 ${_STANDARDUSERPW})
+echo_debug "Attempting to add a new user."
+
+chroot ${CHROOTDIR} /bin/bash -c "useradd -p ${TEMPPW} ${_STANDARDUSER} -m -G ${_STANDARDUSER_GROUPS} -s /bin/bash"
+
+if [ ! -z "${_STANDARDUSER_SSHPUBKEYS}" ]; then
+  echo_debug "Attempting to add ssh pub keys."
+
+  if [ ! -d "${CHROOTDIR}/home/${_STANDARDUSER}/.ssh" ]; then
+    chroot_execute mkdir -p /home/${_STANDARDUSER}/.ssh
+  fi
+
+  echo ${_STANDARDUSER_SSHPUBKEYS} >> ${CHROOTDIR}/home/${_STANDARDUSER}/.ssh/authorized_keys
+
+  chroot_execute chown -R ${_STANDARDUSER}:${_STANDARDUSER} /home/${_STANDARDUSER}/.ssh
+
+  chroot_execute chmod 700 /home/${_STANDARDUSER}/.ssh
+
+  chroot_execute chmod 600 /home/${_STANDARDUSER}/.ssh/authorized_keys
+fi
+
+#Updated sshd
+
+sed -i 's/^#*PubkeyAuthentication\s\+.*$/\PubkeyAuthentication yes/' "${CHROOTDIR}/etc/ssh/sshd_config"
+sed -i 's|^#*AuthorizedKeysFile\s\+.*$|\AuthorizedKeysFile .ssh/authorized_keys|' "${CHROOTDIR}/etc/ssh/sshd_config"
+
+
+if [ "${_SUDO_NOPASSWD}" = "yes" ]; then
+  echo "${_STANDARDUSER} ALL=(ALL) NOPASSWD:ALL" >> ${CHROOTDIR}/etc/sudoers
+fi

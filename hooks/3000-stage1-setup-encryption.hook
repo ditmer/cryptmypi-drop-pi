@@ -1,0 +1,117 @@
+#!/bin/bash
+set -e
+
+
+chroot_pkginstall cryptsetup cryptsetup-initramfs
+
+# Creating symbolic link to e2fsck
+chroot ${_BUILDDIR}/root /bin/bash -c "test -L /sbin/fsck.luks || ln -s /sbin/e2fsck /sbin/fsck.luks"
+
+# Indicate kernel to use initramfs (facilitates loading drivers)
+echo "initramfs initramfs.gz followkernel" >> ${_BUILDDIR}/root/boot/config.txt
+
+# Begin cryptsetup
+echo_debug "Making the cryptsetup settings ..."
+
+# Generate a uuid for luks
+__LUKSUUID=$(cat /proc/sys/kernel/random/uuid)
+echo "__LUKSUUID=${__LUKSUUID}" > ${_BUILDDIR}/root/boot/luksuuid.txt
+
+# Update /boot/cmdline.txt to boot crypt
+#sed -i 's#root=/dev/mmcblk0p2#root=/dev/mapper/crypt#g' ${_BUILDDIR}/root/boot/cmdline.txt
+#sed -i 's#rootfstype=ext3#rootfstype=ext4#g' ${_BUILDDIR}/root/boot/cmdline.txt
+
+echo "dwc_otg.fiq_fix_enable=2 console=serial0,115200 console=tty1 root=/dev/mapper/crypt cryptdevice=/dev/mmcblk0p2:crypt rootfstype=ext4 rootwait rootflags=noload net.ifnames=0" > ${_BUILDDIR}/root/boot/cmdline.txt
+
+# Enable cryptsetup when building initramfs
+echo "CRYPTSETUP=y" >> ${_BUILDDIR}/root/etc/cryptsetup-initramfs/conf-hook
+
+# Update /etc/fstab
+sed -i 's#/dev/mmcblk0p2#/dev/mapper/crypt#g' ${_BUILDDIR}/root/etc/fstab
+sed -i 's#ext3#ext4#g' ${_BUILDDIR}/root/etc/fstab
+
+# Update /etc/crypttab
+#echo "crypt    UUID=${__LUKSUUID}    none    luks,keyscript=/usr/local/sbin/unlock.sh" > ${_BUILDDIR}/root/etc/crypttab
+echo "crypt    /dev/mmcblk0p2    none    luks,keyscript=/usr/local/sbin/unlock.sh" > ${_BUILDDIR}/root/etc/crypttab
+
+# Create a hook to include our crypttab in the initramfs
+cat << EOF > ${_BUILDDIR}/root/etc/initramfs-tools/hooks/zz-cryptsetup
+# !/bin/sh
+set -e
+
+PREREQ=""
+prereqs()
+{
+    echo "\${PREREQ}"
+}
+
+case "\${1}" in
+    prereqs)
+        prereqs
+        exit 0
+        ;;
+esac
+
+. /usr/share/initramfs-tools/hook-functions
+
+mkdir -p \${DESTDIR}/cryptroot || true
+cat /etc/crypttab >> \${DESTDIR}/cryptroot/crypttab
+cat /etc/fstab >> \${DESTDIR}/cryptroot/fstab
+cat /etc/crypttab >> \${DESTDIR}/etc/crypttab
+cat /etc/fstab >> \${DESTDIR}/etc/fstab
+copy_file config /etc/initramfs-tools/unlock.sh /usr/local/sbin/unlock.sh
+EOF
+chmod 755 ${_BUILDDIR}/root/etc/initramfs-tools/hooks/zz-cryptsetup
+
+# Unlock Script
+cat << EOF > "${CHROOTDIR}/etc/initramfs-tools/unlock.sh"
+#!/bin/sh
+
+
+DEV=${_USBUUID}
+KEYFILE=${_KEYFILENAME}
+MD=/tmp-usb-mnt
+
+TRUE=0
+FALSE=1
+
+# flag tracking key-file availability
+OPENED=\$FALSE
+NOFILE=\$FALSE
+modprobe usb-storage >/dev/null 2>&1
+#modprobe vfat >/dev/null 2>&1
+mkdir -p \$MD
+sleep 7
+
+
+if [ -b /dev/disk/by-uuid/\$DEV ]; then
+   echo "> Trying device: \$DEV ..." >&2
+   mount /dev/disk/by-uuid/\$DEV \$MD -o ro 2>/dev/null
+   if [ -f \$MD/\$KEYFILE ]; then
+       dd if=\$MD/\$KEYFILE bs=32 count=1 | cat
+       umount \$MD 2>/dev/null
+       OPENED=\$TRUE
+       NOFILE=\$TRUE
+   else
+      echo "> No Key File found on USB ..." >&2
+   fi
+   umount \$MD 2>/dev/null
+else
+   echo "> No USB found with UUID: \$DEV ..." >&2
+fi
+
+if [ \$OPENED -ne \$TRUE ] || [ \$NOFILE -ne \$TRUE ]; then
+    echo "> FAILED to get USB key file ..." >&2
+    /lib/cryptsetup/askpass "Try LUKS password: "
+else
+    echo "> Success loading key file for Root." >&2
+fi
+
+sleep 2
+
+EOF
+chmod +x "${CHROOTDIR}/etc/initramfs-tools/unlock.sh"
+
+# Adding dm_mod to initramfs modules
+echo 'dm_crypt' >> ${_BUILDDIR}/root/etc/initramfs-tools/modules
+echo 'usb_storage' >> ${_BUILDDIR}/root/etc/initramfs-tools/modules
